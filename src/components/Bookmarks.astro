@@ -28,88 +28,143 @@
 <ul id="bookmark-list" aria-label="Saved bookmarks" aria-live="polite"></ul>
 
 <script>
-  import { createSlug, formatBookmark, normalizeUrl, parseBookmarks } from './bookmark-helpers.js';
+  // Browser-only. Astro does not run this script during the static build.
+  import {
+    BOOKMARK_SEPARATOR,
+    STORAGE_KEY,
+    createSlug,
+    formatBookmark,
+    normalizeUrl,
+    parseBookmarks,
+  } from './bookmark-helpers.js';
 
-  const form = document.querySelector<HTMLFormElement>('#add-bookmark')!;
-  const input = document.querySelector<HTMLInputElement>('#url')!;
-  const list = document.querySelector<HTMLUListElement>('#bookmark-list')!;
-  const empty = document.querySelector<HTMLElement>('#empty-state')!;
-  const header = document.querySelector<HTMLElement>('#list-header')!;
-  const message = document.querySelector<HTMLElement>('#message')!;
-  const storageKey = 'mona-bookmarks';
-  let bookmarks: { url: string; slug: string }[] = [];
+  type Bookmark = { url: string; slug: string };
+
+  const form = requireElement<HTMLFormElement>('#add-bookmark');
+  const input = requireElement<HTMLInputElement>('#url');
+  const list = requireElement<HTMLUListElement>('#bookmark-list');
+  const emptyState = requireElement<HTMLElement>('#empty-state');
+  const listHeader = requireElement<HTMLElement>('#list-header');
+  const status = requireElement<HTMLElement>('#message');
+  const clearAll = requireElement<HTMLButtonElement>('#clear-all');
+
+  let bookmarks = loadBookmarks();
+  renderBookmarks();
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     try {
-      const url = normalizeUrl(input.value);
-      const slug = createSlug(new Set(bookmarks.map((bookmark) => bookmark.slug)));
-      const updated = [...bookmarks, { url, slug }];
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-      bookmarks = updated;
-      render();
+      saveBookmark(input.value);
       input.value = '';
-      message.textContent = 'Bookmark saved.';
+      showStatus('Bookmark saved.');
       input.focus();
     } catch (error) {
-      message.textContent = error instanceof Error ? error.message : 'Could not save your bookmark.';
+      showStatus(errorText(error, 'Could not save your bookmark.'));
     }
   });
 
-  function render() {
-    list.replaceChildren();
-    empty.hidden = bookmarks.length > 0;
-    header.hidden = bookmarks.length === 0;
-    for (const bookmark of bookmarks) {
-      const row = document.createElement('li');
-      row.className = 'bookmark';
-      const text = document.createElement('span');
-      text.className = 'bookmark-text';
-      const link = document.createElement('a');
-      link.className = 'url';
-      link.href = bookmark.url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = bookmark.url;
-      const slug = document.createElement('span');
-      slug.className = 'slug';
-      slug.textContent = bookmark.slug;
-      const formatted = formatBookmark(bookmark);
-      text.append(link, document.createTextNode(formatted.slice(bookmark.url.length, -bookmark.slug.length)), slug);
-      const copy = document.createElement('button');
-      copy.className = 'copy';
-      copy.type = 'button';
-      copy.textContent = 'Copy';
-      copy.setAttribute('aria-label', `Copy slug for ${bookmark.url}`);
-      copy.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(bookmark.slug);
-          message.textContent = 'Slug copied.';
-        } catch {
-          message.textContent = 'Could not copy the slug.';
-        }
-      });
-      row.append(text, copy);
-      list.append(row);
-    }
-  }
-
-  document.querySelector<HTMLButtonElement>('#clear-all')!.addEventListener('click', () => {
+  clearAll.addEventListener('click', () => {
     if (!confirm('Clear all saved bookmarks?')) return;
     try {
-      localStorage.removeItem(storageKey);
+      localStorage.removeItem(STORAGE_KEY);
       bookmarks = [];
-      render();
-      message.textContent = 'Bookmarks cleared.';
+      renderBookmarks();
+      showStatus('Bookmarks cleared.');
     } catch {
-      message.textContent = 'Could not clear your bookmarks.';
+      showStatus('Could not clear your bookmarks.');
     }
   });
 
-  try {
-    bookmarks = parseBookmarks(localStorage.getItem(storageKey));
-  } catch {
-    message.textContent = 'Could not load your bookmarks from browser storage.';
+  function loadBookmarks(): Bookmark[] {
+    try {
+      return parseBookmarks(localStorage.getItem(STORAGE_KEY));
+    } catch {
+      showStatus('Could not load your bookmarks from browser storage.');
+      return [];
+    }
   }
-  render();
+
+  function saveBookmark(rawUrl: string) {
+    const bookmark = {
+      url: normalizeUrl(rawUrl),
+      slug: createSlug(new Set(bookmarks.map((item) => item.slug))),
+    };
+    const next = [...bookmarks, bookmark];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    bookmarks = next;
+    renderBookmarks();
+  }
+
+  function renderBookmarks() {
+    const hasBookmarks = bookmarks.length > 0;
+    emptyState.hidden = hasBookmarks;
+    listHeader.hidden = !hasBookmarks;
+    list.replaceChildren(...bookmarks.map(createBookmarkRow));
+  }
+
+  function createBookmarkRow(bookmark: Bookmark) {
+    const row = document.createElement('li');
+    row.className = 'bookmark';
+
+    const text = document.createElement('span');
+    text.className = 'bookmark-text';
+    text.append(createUrlLink(bookmark.url), separator(), createSlugBadge(bookmark.slug));
+
+    row.append(text, createCopyButton(bookmark));
+    return row;
+  }
+
+  function createUrlLink(url: string) {
+    const link = document.createElement('a');
+    link.className = 'url';
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = url;
+    return link;
+  }
+
+  function separator() {
+    return document.createTextNode(BOOKMARK_SEPARATOR);
+  }
+
+  function createSlugBadge(slug: string) {
+    const badge = document.createElement('span');
+    badge.className = 'slug';
+    badge.textContent = slug;
+    return badge;
+  }
+
+  function createCopyButton(bookmark: Bookmark) {
+    const button = document.createElement('button');
+    button.className = 'copy';
+    button.type = 'button';
+    button.textContent = 'Copy';
+    button.setAttribute('aria-label', `Copy ${formatBookmark(bookmark)}`);
+    button.addEventListener('click', () => copySlug(bookmark.slug));
+    return button;
+  }
+
+  async function copySlug(slug: string) {
+    try {
+      await navigator.clipboard.writeText(slug);
+      showStatus('Slug copied.');
+    } catch {
+      showStatus('Could not copy the slug.');
+    }
+  }
+
+  function showStatus(text: string) {
+    status.textContent = text;
+  }
+
+  function errorText(error: unknown, fallback: string) {
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  function requireElement<T extends Element>(selector: string): T {
+    const element = document.querySelector<T>(selector);
+    if (!element) throw new Error(`Missing required element: ${selector}`);
+    return element;
+  }
 </script>

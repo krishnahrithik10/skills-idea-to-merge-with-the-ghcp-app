@@ -2,39 +2,51 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSlug, formatBookmark, normalizeUrl, parseBookmarks } from '../src/components/bookmark-helpers.js';
 
-test('normalizes URLs with or without https', () => {
-  assert.equal(normalizeUrl('example.com/path'), normalizeUrl('https://example.com/path'));
-  assert.throws(() => normalizeUrl('javascript://alert(1)'));
-  assert.throws(() => normalizeUrl(''));
+test('a URL with or without https normalises to the same saved value', () => {
+  assert.equal(normalizeUrl('example.com/path'), 'https://example.com/path');
+  assert.equal(normalizeUrl('https://example.com/path'), 'https://example.com/path');
 });
 
-test('recovers from empty, corrupted, legacy and non-array storage', () => {
-  for (const value of [null, '', '{bad json', '["https://example.com"]', '{}', 'null', '42']) {
+test('rejects blank and non-http URLs', () => {
+  assert.throws(() => normalizeUrl(''));
+  assert.throws(() => normalizeUrl('javascript://alert(1)'));
+});
+
+test('empty, corrupted, legacy, and non-array storage recovers to an empty list', () => {
+  const unusable = [null, '', '{bad json', '["https://example.com"]', '{}', 'null', '42'];
+
+  for (const value of unusable) {
     assert.deepEqual(parseBookmarks(value), []);
   }
 });
 
-test('keeps only valid bookmark objects from storage', () => {
-  assert.deepEqual(parseBookmarks(JSON.stringify([
+test('loading keeps only well-formed bookmark objects', () => {
+  const stored = JSON.stringify([
     { url: 'example.com', slug: 'mona-7fk2' },
     { url: 'javascript://evil', slug: 'mona-123' },
     { url: 123, slug: 'mona-123' },
     { url: 'https://example.com', slug: '<bad>' },
     null,
-  ])), [{ url: 'https://example.com/', slug: 'mona-7fk2' }]);
+  ]);
+
+  assert.deepEqual(parseBookmarks(stored), [
+    { url: 'https://example.com/', slug: 'mona-7fk2' },
+  ]);
 });
 
-test('formats a bookmark with the exact separator', () => {
-  assert.equal(formatBookmark({ url: 'https://www.example.com', slug: 'mona-7fk2' }),
-    'https://www.example.com :: mona-7fk2');
+test('a saved bookmark formats as "<url> :: <slug>"', () => {
+  const bookmark = { url: 'https://www.example.com', slug: 'mona-7fk2' };
+
+  assert.equal(formatBookmark(bookmark), 'https://www.example.com :: mona-7fk2');
 });
 
-test('generates short base62 slugs that do not collide with existing ones', () => {
-  const slugs = new Set();
+test('slugs are short, base62, prefixed, and unique', () => {
+  const existing = new Set();
+
   for (let i = 0; i < 50; i++) {
-    const slug = createSlug(slugs);
+    const slug = createSlug(existing);
     assert.match(slug, /^mona-[a-zA-Z0-9]{6}$/);
-    assert.equal(slugs.has(slug), false);
-    slugs.add(slug);
+    assert.equal(existing.has(slug), false);
+    existing.add(slug);
   }
 });
